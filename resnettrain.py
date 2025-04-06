@@ -6,13 +6,13 @@ from torch.utils.data import DataLoader
 import os
 from sklearn.metrics import accuracy_score
 
-# 📌 Cihaz seçimi (GPU varsa onu kullan)
+#  Cihaz seçimi (GPU varsa onu kullan)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 📁 Dataset yolu
+#  Dataset yolu
 dataset_path = "C:/Users/krono/PycharmProjects/LeaforiaTrue/dataset"
 
-# 📦 Veri dönüşümleri
+#  Veri dönüşümleri
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
@@ -20,27 +20,27 @@ transform = transforms.Compose([
                          [0.229, 0.224, 0.225])
 ])
 
-# 📂 Eğitim ve test datasetleri
+#  Eğitim ve test datasetleri
 train_dataset = datasets.ImageFolder(os.path.join(dataset_path, "train"), transform=transform)
 test_dataset = datasets.ImageFolder(os.path.join(dataset_path, "test"), transform=transform)
 
-# 🔄 DataLoader
+#  DataLoader
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=0)
 test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=0)
 
-# 📌 Sınıf sayısını al
+#  Sınıf sayısını al
 num_classes = len(train_dataset.classes)
 
-# 🧠 ResNet18 modelini yükle (pretrained=True ile başlatılır)
+#  ResNet18 modelini yükle (pretrained=True ile başlatılır)
 model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
 model.fc = nn.Linear(model.fc.in_features, num_classes)  # Output sınıf sayısına göre ayarla
 model = model.to(device)
 
-# 🎯 Loss ve optimizer
+#  Loss ve optimizer
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
-# 🔁 Eğitim fonksiyonu
+#  Eğitim fonksiyonu
 def train_model(epochs=10):
     model.train()
     for epoch in range(epochs):
@@ -70,7 +70,7 @@ def train_model(epochs=10):
     torch.save(model.state_dict(), "resnet18_leaforia.pth")
     print("✅ Model kaydedildi: resnet18_leaforia.pth")
 
-# 🔍 Test fonksiyonu
+#  Test fonksiyonu
 def test_model():
     model.eval()
     y_true, y_pred = [], []
@@ -87,7 +87,7 @@ def test_model():
     acc = accuracy_score(y_true, y_pred)
     print(f"✅ Test Accuracy: {acc * 100:.2f}%")
 
-# 🔁 Çalıştırma
+#  Çalıştırma
 if __name__ == "__main__":
     train_model(epochs=10)
     test_model()
