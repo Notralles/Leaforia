@@ -1,40 +1,20 @@
 import os
-import random
-import shutil
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-from torchvision.models import (
-    mobilenet_v3_small, MobileNet_V3_Small_Weights,
-    mobilenet_v2, MobileNet_V2_Weights,
-    efficientnet_b0, EfficientNet_B0_Weights
-)
 import numpy as np
 from sklearn.metrics import confusion_matrix, accuracy_score, recall_score, precision_score, f1_score
 import matplotlib.pyplot as plt
 import seaborn as sns
+from torchvision import datasets, transforms
+from torchvision.models import (
+    mobilenet_v3_small, mobilenet_v2, efficientnet_b0, squeezenet1_0, shufflenet_v2_x1_0
+)
 
-# Device selection
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-# Dataset paths
-dataset_dir = r"C:\dataset"  # dataset klasörü burada olacak
-train_dir = os.path.join(dataset_dir, "train")
-val_dir = os.path.join(dataset_dir, "val")
+dataset_dir = r"C:\dataset"
 test_dir = os.path.join(dataset_dir, "test")
-
-# Data transformations
-train_transform = transforms.Compose([
-    transforms.RandomResizedCrop(224),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225])
-])
 
 test_transform = transforms.Compose([
     transforms.Resize(256),
@@ -44,52 +24,52 @@ test_transform = transforms.Compose([
                          std=[0.229, 0.224, 0.225])
 ])
 
-# Dataset
-train_dataset = datasets.ImageFolder(train_dir, transform=train_transform)
-val_dataset = datasets.ImageFolder(val_dir, transform=test_transform)
 test_dataset = datasets.ImageFolder(test_dir, transform=test_transform)
+test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4)
 
-# DataLoader'lar
-batch_size = 64
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
-
-# Model preparation functions
-def prepare_mobilenet_v3(num_classes):
-    model = mobilenet_v3_small(weights=MobileNet_V3_Small_Weights.IMAGENET1K_V1)
+# Model loading functions
+def load_mobilenet_v3(num_classes):
+    model = mobilenet_v3_small(weights=None)
     model.classifier[3] = nn.Linear(model.classifier[3].in_features, num_classes)
-    return model
+    model.load_state_dict(torch.load("mobilenetv3_model.pth"))
+    return model.to(device).eval()
 
-def prepare_mobilenet_v2(num_classes):
-    model = mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
+def load_mobilenet_v2(num_classes):
+    model = mobilenet_v2(weights=None)
     model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
-    return model
+    model.load_state_dict(torch.load("mobilenetv2_model.pth"))
+    return model.to(device).eval()
 
-def prepare_efficientnet_b0(num_classes):
-    model = efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
+def load_efficientnet_b0(num_classes):
+    model = efficientnet_b0(weights=None)
     model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
-    return model
+    model.load_state_dict(torch.load("efficientnetb0_model.pth"))
+    return model.to(device).eval()
 
-# Training function
-def train_model(model, dataloader, criterion, optimizer, epochs=10):
-    model.to(device)
-    for epoch in range(epochs):
-        model.train()
-        running_loss = 0.0
-        for inputs, labels in dataloader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            running_loss += loss.item() * inputs.size(0)
-        epoch_loss = running_loss / len(dataloader.dataset)
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss:.4f}")
-    return model
+def load_squeezenet(num_classes):
+    model = squeezenet1_0(weights=None)
+    model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1, 1))
+    model.num_classes = num_classes
+    model.load_state_dict(torch.load("squeezenet1.0_model.pth"))
+    return model.to(device).eval()
 
-# Evaluation function
+def load_shufflenet(num_classes):
+    model = shufflenet_v2_x1_0(weights=None)
+    model.fc = nn.Linear(model.fc.in_features, num_classes)
+    model.load_state_dict(torch.load("shufflenetv2_model.pth"))
+    return model.to(device).eval()
+
+# Ensemble predictions
+def ensemble_predictions(model_probs_list, weights=None):
+    if weights is None:
+        weights = [1/len(model_probs_list)] * len(model_probs_list)
+    ensemble_probs = np.zeros_like(model_probs_list[0])
+    for i, probs in enumerate(model_probs_list):
+        ensemble_probs += weights[i] * probs
+    ensemble_preds = np.argmax(ensemble_probs, axis=1)
+    return ensemble_preds, ensemble_probs
+
+# Evaluation
 def evaluate_model(model, dataloader):
     model.eval()
     all_preds, all_probs, all_labels = [], [], []
@@ -104,27 +84,7 @@ def evaluate_model(model, dataloader):
             all_labels.extend(labels.cpu().numpy())
     return np.array(all_labels), np.array(all_preds), np.array(all_probs)
 
-# Ensemble predictions
-def ensemble_predictions(model_probs_list, weights=None):
-    if weights is None:
-        weights = [1/len(model_probs_list)] * len(model_probs_list)
-    ensemble_probs = np.zeros_like(model_probs_list[0])
-    for i, probs in enumerate(model_probs_list):
-        ensemble_probs += weights[i] * probs
-    ensemble_preds = np.argmax(ensemble_probs, axis=1)
-    return ensemble_preds, ensemble_probs
-
-# Confusion matrix visualization
-def plot_confusion_matrix(cm, class_names, title):
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
-    plt.xlabel('Predicted')
-    plt.ylabel('Actual')
-    plt.title(title)
-    plt.tight_layout()
-    plt.show()
-
-# Metric computation
+# Compute metrics
 def compute_metrics(y_true, y_pred):
     return {
         "accuracy": accuracy_score(y_true, y_pred),
@@ -142,59 +102,49 @@ def print_metrics(name, metrics):
     print(f"Recall:    {metrics['recall']:.4f}")
     print(f"F1 Score:  {metrics['f1']:.4f}")
 
-# MAIN BLOK - BURASI OLAYIN KALBİ
+# Plot confusion matrix with c0, c1, c2, c3
+def plot_confusion_matrix(cm, title):
+    # Class names as c0, c1, c2, c3
+    class_names = ['c0', 'c1', 'c2', 'c3']
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.title(title)
+    plt.tight_layout()
+    plt.show()
+
 if __name__ == "__main__":
-    # Model oluştur
-    mobilenetv3_model = prepare_mobilenet_v3(num_classes=len(train_dataset.classes))
-    mobilenetv2_model = prepare_mobilenet_v2(num_classes=len(train_dataset.classes))
-    efficientnetb0_model = prepare_efficientnet_b0(num_classes=len(train_dataset.classes))
+    num_classes = 4  # Since we have 4 classes
 
-    # Loss ve optimizer
-    criterion = nn.CrossEntropyLoss()
-    mobilenetv3_optimizer = optim.Adam(mobilenetv3_model.parameters(), lr=0.0001)
-    mobilenetv2_optimizer = optim.Adam(mobilenetv2_model.parameters(), lr=0.0001)
-    efficientnetb0_optimizer = optim.Adam(efficientnetb0_model.parameters(), lr=0.0001)
+    # Load models
+    mobilenetv3_model = load_mobilenet_v3(num_classes)
+    mobilenetv2_model = load_mobilenet_v2(num_classes)
+    efficientnetb0_model = load_efficientnet_b0(num_classes)
+    squeezenet_model = load_squeezenet(num_classes)
+    shufflenet_model = load_shufflenet(num_classes)
 
-    # Eğitim
-    print("Training MobileNetV3...")
-    mobilenetv3_model = train_model(mobilenetv3_model, train_loader, criterion, mobilenetv3_optimizer)
-
-    print("\nTraining MobileNetV2...")
-    mobilenetv2_model = train_model(mobilenetv2_model, train_loader, criterion, mobilenetv2_optimizer)
-
-    print("\nTraining EfficientNetB0...")
-    efficientnetb0_model = train_model(efficientnetb0_model, train_loader, criterion, efficientnetb0_optimizer)
-
-    # Değerlendirme
     print("\nEvaluating models...")
-    y_true, mobilenetv3_preds, mobilenetv3_probs = evaluate_model(mobilenetv3_model, test_loader)
-    _, mobilenetv2_preds, mobilenetv2_probs = evaluate_model(mobilenetv2_model, test_loader)
-    _, efficientnetb0_preds, efficientnetb0_probs = evaluate_model(efficientnetb0_model, test_loader)
+    y_true, mobv3_preds, mobv3_probs = evaluate_model(mobilenetv3_model, test_loader)
+    _, mobv2_preds, mobv2_probs = evaluate_model(mobilenetv2_model, test_loader)
+    _, eff_preds, eff_probs = evaluate_model(efficientnetb0_model, test_loader)
+    _, squeeze_preds, squeeze_probs = evaluate_model(squeezenet_model, test_loader)
+    _, shuffle_preds, shuffle_probs = evaluate_model(shufflenet_model, test_loader)
 
-    # Ensemble
-    model_probs = [mobilenetv3_probs, mobilenetv2_probs, efficientnetb0_probs]
-    ensemble_preds, ensemble_probs = ensemble_predictions(model_probs)
+    # Ensemble the models
+    all_probs = [mobv3_probs, mobv2_probs, eff_probs, squeeze_probs, shuffle_probs]
+    ensemble_preds, ensemble_probs = ensemble_predictions(all_probs)
 
-    # Metrikler
-    mobilenetv3_metrics = compute_metrics(y_true, mobilenetv3_preds)
-    mobilenetv2_metrics = compute_metrics(y_true, mobilenetv2_preds)
-    efficientnetb0_metrics = compute_metrics(y_true, efficientnetb0_preds)
-    ensemble_metrics = compute_metrics(y_true, ensemble_preds)
+    # Compute and print metrics
+    metrics = {
+        "MobileNetV3": compute_metrics(y_true, mobv3_preds),
+        "MobileNetV2": compute_metrics(y_true, mobv2_preds),
+        "EfficientNetB0": compute_metrics(y_true, eff_preds),
+        "SqueezeNet": compute_metrics(y_true, squeeze_preds),
+        "ShuffleNet": compute_metrics(y_true, shuffle_preds),
+        "Ensemble": compute_metrics(y_true, ensemble_preds)
+    }
 
-    # Yazdır
-    print_metrics("MobileNetV3", mobilenetv3_metrics)
-    print_metrics("MobileNetV2", mobilenetv2_metrics)
-    print_metrics("EfficientNetB0", efficientnetb0_metrics)
-    print_metrics("Ensemble", ensemble_metrics)
-
-    # Confusion Matrix çiz
-    plot_confusion_matrix(mobilenetv3_metrics["confusion_matrix"], train_dataset.classes, "MobileNetV3 Confusion Matrix")
-    plot_confusion_matrix(mobilenetv2_metrics["confusion_matrix"], train_dataset.classes, "MobileNetV2 Confusion Matrix")
-    plot_confusion_matrix(efficientnetb0_metrics["confusion_matrix"], train_dataset.classes, "EfficientNetB0 Confusion Matrix")
-    plot_confusion_matrix(ensemble_metrics["confusion_matrix"], train_dataset.classes, "Ensemble Model Confusion Matrix")
-
-    # Modelleri kaydet
-    torch.save(mobilenetv3_model.state_dict(), "mobilenetv3_model.pth")
-    torch.save(mobilenetv2_model.state_dict(), "mobilenetv2_model.pth")
-    torch.save(efficientnetb0_model.state_dict(), "efficientnetb0_model.pth")
-    print("\nModels saved successfully.")
+    for name, met in metrics.items():
+        print_metrics(name, met)
+        plot_confusion_matrix(met["confusion_matrix"], f"{name} Confusion Matrix")

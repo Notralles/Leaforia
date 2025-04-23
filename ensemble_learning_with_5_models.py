@@ -188,6 +188,6 @@ if __name__ == "__main__":
         print_metrics(name, met)
         plot_confusion_matrix(met["confusion_matrix"], train_dataset.classes, f"{name} Confusion Matrix")
 
-    torch.save(squeezenet_model.state_dict(), "squeezenet_model.pth")
-    torch.save(shufflenet_model.state_dict(), "shufflenet_model.pth")
+    torch.save(squeezenet_model.state_dict(), "squeezenet1.0_model.pth")
+    torch.save(shufflenet_model.state_dict(), "shufflenetv2_model.pth")
     print("\nModels saved successfully.")
