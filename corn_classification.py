@@ -1,22 +1,42 @@
 import os
+import random
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
-from sklearn.metrics import confusion_matrix, accuracy_score, recall_score, precision_score, f1_score
-import matplotlib.pyplot as plt
-import seaborn as sns
+import torch.optim as optim
 from torchvision import datasets, transforms
 from torchvision.models import (
-    mobilenet_v3_small, mobilenet_v2, efficientnet_b0, squeezenet1_0, shufflenet_v2_x1_0
+    squeezenet1_0, mobilenet_v2, efficientnet_b0,
+    densenet121, shufflenet_v2_x1_0
 )
+from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report, confusion_matrix
+import seaborn as sns
 
+# === Reproducibility ===
+def set_seed(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+set_seed(42)
+
+# === Device ===
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
+# === Paths ===
 dataset_dir = r"C:\dataset"
+train_dir = os.path.join(dataset_dir, "train")
+val_dir = os.path.join(dataset_dir, "val")
 test_dir = os.path.join(dataset_dir, "test")
 
-test_transform = transforms.Compose([
+# === Transforms ===
+transform = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
     transforms.ToTensor(),
@@ -24,127 +44,163 @@ test_transform = transforms.Compose([
                          std=[0.229, 0.224, 0.225])
 ])
 
-test_dataset = datasets.ImageFolder(test_dir, transform=test_transform)
-test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4)
+# === Datasets & Loaders ===
+train_dataset = datasets.ImageFolder(train_dir, transform=transform)
+val_dataset = datasets.ImageFolder(val_dir, transform=transform)
+test_dataset = datasets.ImageFolder(test_dir, transform=transform)
 
-# Model loading functions
-def load_mobilenet_v3(num_classes):
-    model = mobilenet_v3_small(weights=None)
-    model.classifier[3] = nn.Linear(model.classifier[3].in_features, num_classes)
-    model.load_state_dict(torch.load("mobilenetv3_model.pth"))
-    return model.to(device).eval()
+train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
+val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=4)
+test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4)
 
-def load_mobilenet_v2(num_classes):
-    model = mobilenet_v2(weights=None)
-    model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
-    model.load_state_dict(torch.load("mobilenetv2_model.pth"))
-    return model.to(device).eval()
+dataloaders = {"train": train_loader, "val": val_loader}
 
-def load_efficientnet_b0(num_classes):
-    model = efficientnet_b0(weights=None)
-    model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
-    model.load_state_dict(torch.load("efficientnetb0_model.pth"))
-    return model.to(device).eval()
-
-def load_squeezenet(num_classes):
+# === Model Initialization Functions ===
+def init_squeezenet(num_classes):
     model = squeezenet1_0(weights=None)
     model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1, 1))
     model.num_classes = num_classes
-    model.load_state_dict(torch.load("squeezenet1.0_model.pth"))
-    return model.to(device).eval()
+    return model.to(device)
 
-def load_shufflenet(num_classes):
+def init_mobilenetv2(num_classes):
+    model = mobilenet_v2(weights=None)
+    model.classifier[1] = nn.Linear(model.last_channel, num_classes)
+    return model.to(device)
+
+def init_efficientnetb0(num_classes):
+    model = efficientnet_b0(weights=None)
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
+    return model.to(device)
+
+def init_densenet121(num_classes):
+    model = densenet121(weights=None)
+    model.classifier = nn.Linear(model.classifier.in_features, num_classes)
+    return model.to(device)
+
+def init_shufflenet(num_classes):
     model = shufflenet_v2_x1_0(weights=None)
     model.fc = nn.Linear(model.fc.in_features, num_classes)
-    model.load_state_dict(torch.load("shufflenetv2_model.pth"))
-    return model.to(device).eval()
+    return model.to(device)
 
-# Ensemble predictions
-def ensemble_predictions(model_probs_list, weights=None):
-    if weights is None:
-        weights = [1/len(model_probs_list)] * len(model_probs_list)
-    ensemble_probs = np.zeros_like(model_probs_list[0])
-    for i, probs in enumerate(model_probs_list):
-        ensemble_probs += weights[i] * probs
-    ensemble_preds = np.argmax(ensemble_probs, axis=1)
-    return ensemble_preds, ensemble_probs
-
-# Evaluation
-def evaluate_model(model, dataloader):
+# === Evaluation Function ===
+def evaluate_model(model, dataloader, class_names, model_name):
     model.eval()
-    all_preds, all_probs, all_labels = [], [], []
+    all_preds, all_labels = [], []
+
     with torch.no_grad():
         for inputs, labels in dataloader:
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
-            probs = torch.nn.functional.softmax(outputs, dim=1)
             _, preds = torch.max(outputs, 1)
             all_preds.extend(preds.cpu().numpy())
-            all_probs.extend(probs.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
-    return np.array(all_labels), np.array(all_preds), np.array(all_probs)
 
-# Compute metrics
-def compute_metrics(y_true, y_pred):
-    return {
-        "accuracy": accuracy_score(y_true, y_pred),
-        "precision": precision_score(y_true, y_pred, average='weighted'),
-        "recall": recall_score(y_true, y_pred, average='weighted'),
-        "f1": f1_score(y_true, y_pred, average='weighted'),
-        "confusion_matrix": confusion_matrix(y_true, y_pred)
-    }
+    # Classification Report
+    print("\n--- Test Set Classification Report ---")
+    print(classification_report(all_labels, all_preds, target_names=class_names))
 
-# Print metrics
-def print_metrics(name, metrics):
-    print(f"\n{name} Performance Metrics:")
-    print(f"Accuracy:  {metrics['accuracy']:.4f}")
-    print(f"Precision: {metrics['precision']:.4f}")
-    print(f"Recall:    {metrics['recall']:.4f}")
-    print(f"F1 Score:  {metrics['f1']:.4f}")
-
-# Plot confusion matrix with c0, c1, c2, c3
-def plot_confusion_matrix(cm, title):
-    # Class names as c0, c1, c2, c3
-    class_names = ['c0', 'c1', 'c2', 'c3']
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
-    plt.xlabel('Predicted')
-    plt.ylabel('Actual')
-    plt.title(title)
+    # Confusion Matrix
+    cm = confusion_matrix(all_labels, all_preds)
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=class_names, yticklabels=class_names)
+    plt.title(f"Confusion Matrix - {model_name}")
+    plt.xlabel("Predicted")
+    plt.ylabel("Actual")
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f"{model_name}_confusion_matrix.png")
+    plt.close()
 
+# === Training Function ===
+def train_model(model, dataloaders, criterion, optimizer, num_epochs, model_name, class_names):
+    best_val_acc = 0.0
+    train_losses, val_losses = [], []
+
+    for epoch in range(num_epochs):
+        print(f"\nEpoch {epoch+1}/{num_epochs} - {model_name}")
+        print("-" * 30)
+
+        # === Training ===
+        model.train()
+        train_loss, train_corrects = 0.0, 0
+
+        for inputs, labels in dataloaders['train']:
+            inputs, labels = inputs.to(device), labels.to(device)
+            optimizer.zero_grad()
+
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            _, preds = torch.max(outputs, 1)
+            train_loss += loss.item() * inputs.size(0)
+            train_corrects += torch.sum(preds == labels)
+
+        epoch_train_loss = train_loss / len(dataloaders['train'].dataset)
+        epoch_train_acc = train_corrects.double() / len(dataloaders['train'].dataset)
+        train_losses.append(epoch_train_loss)
+
+        # === Validation ===
+        model.eval()
+        val_loss, val_corrects = 0.0, 0
+        with torch.no_grad():
+            for inputs, labels in dataloaders['val']:
+                inputs, labels = inputs.to(device), labels.to(device)
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+
+                _, preds = torch.max(outputs, 1)
+                val_loss += loss.item() * inputs.size(0)
+                val_corrects += torch.sum(preds == labels)
+
+        epoch_val_loss = val_loss / len(dataloaders['val'].dataset)
+        epoch_val_acc = val_corrects.double() / len(dataloaders['val'].dataset)
+        val_losses.append(epoch_val_loss)
+
+        print(f"Train Loss: {epoch_train_loss:.4f}, Acc: {epoch_train_acc:.4f}")
+        print(f"Val   Loss: {epoch_val_loss:.4f}, Acc: {epoch_val_acc:.4f}")
+
+        if epoch_val_acc > best_val_acc:
+            best_val_acc = epoch_val_acc
+            torch.save(model.state_dict(), f"{model_name}_best.pth")
+            print(f">>> Best model saved with acc: {best_val_acc:.4f}")
+
+    # === Loss Plot ===
+    plt.figure()
+    plt.plot(range(1, num_epochs+1), train_losses, label="Train Loss")
+    plt.plot(range(1, num_epochs+1), val_losses, label="Val Loss")
+    plt.title(f'Loss per Epoch: {model_name}')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(f"{model_name}_loss.png")
+    plt.close()
+
+    # === Load Best Model and Evaluate ===
+    print(f"\n>>> Loading best model for final evaluation: {model_name}")
+    model.load_state_dict(torch.load(f"{model_name}_best.pth"))
+    evaluate_model(model, test_loader, class_names, model_name)
+
+# === Main ===
 if __name__ == "__main__":
-    num_classes = 4  # Since we have 4 classes
+    num_classes = 4
+    num_epochs = 30
+    class_names = train_dataset.classes
+    criterion = nn.CrossEntropyLoss()
 
-    # Load models
-    mobilenetv3_model = load_mobilenet_v3(num_classes)
-    mobilenetv2_model = load_mobilenet_v2(num_classes)
-    efficientnetb0_model = load_efficientnet_b0(num_classes)
-    squeezenet_model = load_squeezenet(num_classes)
-    shufflenet_model = load_shufflenet(num_classes)
-
-    print("\nEvaluating models...")
-    y_true, mobv3_preds, mobv3_probs = evaluate_model(mobilenetv3_model, test_loader)
-    _, mobv2_preds, mobv2_probs = evaluate_model(mobilenetv2_model, test_loader)
-    _, eff_preds, eff_probs = evaluate_model(efficientnetb0_model, test_loader)
-    _, squeeze_preds, squeeze_probs = evaluate_model(squeezenet_model, test_loader)
-    _, shuffle_preds, shuffle_probs = evaluate_model(shufflenet_model, test_loader)
-
-    # Ensemble the models
-    all_probs = [mobv3_probs, mobv2_probs, eff_probs, squeeze_probs, shuffle_probs]
-    ensemble_preds, ensemble_probs = ensemble_predictions(all_probs)
-
-    # Compute and print metrics
-    metrics = {
-        "MobileNetV3": compute_metrics(y_true, mobv3_preds),
-        "MobileNetV2": compute_metrics(y_true, mobv2_preds),
-        "EfficientNetB0": compute_metrics(y_true, eff_preds),
-        "SqueezeNet": compute_metrics(y_true, squeeze_preds),
-        "ShuffleNet": compute_metrics(y_true, shuffle_preds),
-        "Ensemble": compute_metrics(y_true, ensemble_preds)
+    model_fns = {
+        "squeezenet1.0": init_squeezenet,
+        "mobilenetv2": init_mobilenetv2,
+        "efficientnetb0": init_efficientnetb0,
+        "densenet121": init_densenet121,
+        "shufflenetv2": init_shufflenet
     }
 
-    for name, met in metrics.items():
-        print_metrics(name, met)
-        plot_confusion_matrix(met["confusion_matrix"], f"{name} Confusion Matrix")
+    for name, init_fn in model_fns.items():
+        print(f"\n=== Training {name} ===")
+        model = init_fn(num_classes)
+        optimizer = optim.Adam(model.parameters(), lr=0.001)
+        train_model(model, dataloaders, criterion, optimizer, num_epochs, name, class_names)
+        torch.cuda.empty_cache()
