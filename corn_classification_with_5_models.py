@@ -198,36 +198,41 @@ def ensemble_predictions(prob_list):
     return preds
 
 # Ana blok
+# (Yukarıdaki tüm kod bölümleri aynı kalıyor, sadece aşağıdaki __main__ kısmı güncellendi)
+
 if __name__ == "__main__":
+    probs_list = []
+    y_true_ref = None
+
     print("------ SqueezeNet Sonuçları ------")
     squeezenet_model = load_squeezenet(num_classes)
-    y_true_sq, y_pred_sq, _ = evaluate_model(squeezenet_model)
+    y_true_sq, y_pred_sq, probs_sq = evaluate_model(squeezenet_model)
     print(classification_report(y_true_sq, y_pred_sq, target_names=class_names))
     print(f"Accuracy: {accuracy_score(y_true_sq, y_pred_sq) * 100:.2f}%")
+    plot_conf_matrix(confusion_matrix(y_true_sq, y_pred_sq), "SqueezeNet Confusion Matrix")
+    probs_list.append(probs_sq)
+    y_true_ref = y_true_sq  # Referans olarak alınıyor
 
     print("\n------ ShuffleNet Sonuçları ------")
     shufflenet_model = load_shufflenet(num_classes)
-    y_true_sh, y_pred_sh, _ = evaluate_model(shufflenet_model)
+    y_true_sh, y_pred_sh, probs_sh = evaluate_model(shufflenet_model)
     print(classification_report(y_true_sh, y_pred_sh, target_names=class_names))
     print(f"Accuracy: {accuracy_score(y_true_sh, y_pred_sh) * 100:.2f}%")
+    plot_conf_matrix(confusion_matrix(y_true_sh, y_pred_sh), "ShuffleNet Confusion Matrix")
+    probs_list.append(probs_sh)
 
-    print("\n------ Eğitimli 3 Model ve Ensemble Sonuçları ------")
+    print("\n------ Eğitimli 3 Model ve Sonuçları ------")
     models_dict = {
         "MobileNetV2": prepare_mobilenetv2(num_classes),
         "EfficientNetB0": prepare_efficientnetb0(num_classes),
         "MNASNet": prepare_mnasnet(num_classes)
     }
 
-    probs_list = []
-    y_true_ref = None
-
     for name, model in models_dict.items():
         optimizer = optim.Adam(model.parameters(), lr=1e-4)
         criterion = nn.CrossEntropyLoss()
         model = train_model(model, name, criterion, optimizer)
         y_true, y_pred, probs = evaluate_model(model)
-        if y_true_ref is None:
-            y_true_ref = y_true
         metrics = compute_metrics(y_true, y_pred)
         print(f"\n{name} Metrics:")
         print(f"Accuracy:  {metrics['accuracy']:.4f}")
@@ -238,10 +243,9 @@ if __name__ == "__main__":
         torch.save(model.state_dict(), f"{name.lower()}.pth")
         probs_list.append(probs)
 
-    # Ensemble
+    print("\n------ Ensemble (Soft Voting - 5 Model) Sonuçları ------")
     ensemble_preds = ensemble_predictions(probs_list)
     ensemble_metrics = compute_metrics(y_true_ref, ensemble_preds)
-    print(f"\nEnsemble Metrics:")
     print(f"Accuracy:  {ensemble_metrics['accuracy']:.4f}")
     print(f"Precision: {ensemble_metrics['precision']:.4f}")
     print(f"Recall:    {ensemble_metrics['recall']:.4f}")

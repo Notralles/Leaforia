@@ -69,15 +69,7 @@ def load_mnasnet(num_classes):
     model.eval()
     return model.to(device)
 
-def ensemble_predict(image_tensor, num_classes):
-    models = [
-        load_mobilenetv2(num_classes),
-        load_efficientnet_b0(num_classes),
-        load_mnasnet(num_classes),
-        load_shufflenet(num_classes),
-        load_squeezenet(num_classes)
-    ]
-
+def ensemble_predict(image_tensor, models):
     probs_list = []
 
     with torch.no_grad():
@@ -98,12 +90,23 @@ if __name__ == "__main__":
     image_path = "path/test_image.JPG"
     num_classes = len(class_names)
 
+    # Test için geçici dosya kontrolü
     if not os.path.exists(image_path):
         print(f"Image not found: {image_path}")
     else:
         image_tensor = load_image(image_path)
         start_time = time.time()
-        pred_class, confidence, class_probs = ensemble_predict(image_tensor, num_classes)
+
+        # Modelleri yükle
+        mobilenet_model = load_mobilenetv2(num_classes)
+        efficientnet_model = load_efficientnet_b0(num_classes)
+        mnasnet_model = load_mnasnet(num_classes)
+        shufflenet_model = load_shufflenet(num_classes)
+        squeezenet_model = load_squeezenet(num_classes)
+
+        models = [mobilenet_model, efficientnet_model, mnasnet_model, shufflenet_model, squeezenet_model]
+
+        pred_class, confidence, class_probs = ensemble_predict(image_tensor, models)
         end_time = time.time()
 
         print(f"Predicted Class: {pred_class}")

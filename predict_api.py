@@ -1,12 +1,22 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS  # CORS desteği eklemek için gerekli import
-from predict_image import load_image, ensemble_predict, class_names
+from flask_cors import CORS
+from predict_image import load_image, ensemble_predict, class_names, load_mobilenetv2, load_efficientnet_b0, load_squeezenet, load_shufflenet, load_mnasnet
 import os
 
 # Flask uygulamasını başlat
 app = Flask(__name__)
-CORS(app)  # CORS izinlerini sağlıyoruz, böylece Flutter uygulaması bağlantı yapabilir
+CORS(app)
+
 num_classes = len(class_names)
+
+# Modelleri baştan yükle ve bellekte tut
+mobilenet_model = load_mobilenetv2(num_classes)
+efficientnet_model = load_efficientnet_b0(num_classes)
+mnasnet_model = load_mnasnet(num_classes)
+shufflenet_model = load_shufflenet(num_classes)
+squeezenet_model = load_squeezenet(num_classes)
+
+models = [mobilenet_model, efficientnet_model, mnasnet_model, shufflenet_model, squeezenet_model]
 
 @app.route("/predict", methods=["POST"])
 def predict():
@@ -24,7 +34,7 @@ def predict():
         # Resmi yükleyip modele uygun hale getiriyoruz
         image_tensor = load_image(temp_path)
         # Modeli çalıştırıyoruz ve sonuçları alıyoruz
-        pred_class, confidence, probs = ensemble_predict(image_tensor, num_classes)
+        pred_class, confidence, probs = ensemble_predict(image_tensor, models)
 
         # Tahmin sonuçlarını JSON formatında geri döndürüyoruz
         return jsonify({
